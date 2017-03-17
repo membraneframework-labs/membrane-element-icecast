@@ -1,0 +1,1 @@
+%{"membrane_core": {:git, "git@github.com:membraneframework/membrane-core.git", "05ad0f1a404b34167abab466702f00784c11b90e", []}}
