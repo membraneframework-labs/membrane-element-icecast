@@ -31,6 +31,7 @@ defmodule Membrane.Element.Icecast.Mixfile do
   defp deps do
     [
       {:membrane_core, git: "git@github.com:membraneframework/membrane-core.git"},
+      {:membrane_caps_audio_mpeg, git: "git@github.com:membraneframework/membrane-caps-audio-mpeg.git"},
     ]
   end
 end
