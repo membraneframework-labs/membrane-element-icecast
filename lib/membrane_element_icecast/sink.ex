@@ -2,10 +2,11 @@ defmodule Membrane.Element.Icecast.Sink do
   use Membrane.Element.Base.Sink
   use Membrane.Mixins.Log
   alias Membrane.Element.Icecast.Sink.Options
-
+  alias Membrane.Buffer
+  @moduledoc false
 
   def_known_sink_pads %{
-    :sink => {:always, [
+    :sink => {:always, {:pull, demand_in: :bytes}, [
       %Membrane.Caps.Audio.MPEG{}
     ]}
   }
@@ -14,7 +15,7 @@ defmodule Membrane.Element.Icecast.Sink do
   # Private API
 
   @doc false
-  def handle_init(%Options{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout}) do
+  def handle_init(%Options{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout, demand_size: demand_size}) do
     {:ok, %{
       sock: nil,
       host: host,
@@ -23,13 +24,14 @@ defmodule Membrane.Element.Icecast.Sink do
       password: password,
       connect_timeout: connect_timeout,
       request_timeout: request_timeout,
+      demand_size: demand_size,
     }}
   end
 
 
   @doc false
-  def handle_play(%{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout} = state) do
-    case :gen_tcp.connect(to_char_list(host), port, [mode: :binary, packet: :line, active: false, keepalive: true], connect_timeout) do
+  def handle_play(%{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout, demand_size: demand_size} = state) do
+    case :gen_tcp.connect(to_charlist(host), port, [mode: :binary, packet: :line, active: false, keepalive: true], connect_timeout) do
       {:ok, sock} ->
         info("Connected to #{host}:#{port}")
 
@@ -41,7 +43,7 @@ defmodule Membrane.Element.Icecast.Sink do
             case :gen_tcp.recv(sock, 0, request_timeout) do
               {:ok, "HTTP/1.0 200 OK\r\n"} ->
                 info("Got OK response")
-                {:ok, %{state | sock: sock}}
+                {{:ok, demand: {:sink, demand_size}}, %{state | sock: sock}}
 
               {:ok, response} ->
                 warn("Got unexpected response: #{inspect(response)}")
@@ -79,15 +81,15 @@ defmodule Membrane.Element.Icecast.Sink do
 
 
   @doc false
-  def handle_buffer(:sink, _caps, _buffer, %{sock: nil} = state) do
+  def handle_write1(:sink, _caps, _buffer, %{sock: nil} = state) do
     warn("Received buffer while not connected")
     {:ok, state}
   end
 
-  def handle_buffer(:sink, _caps, %Membrane.Buffer{payload: payload}, %{sock: sock} = state) do
+  def handle_write1(:sink, %Buffer{payload: payload}, _caps, %{sock: sock, demand_size: demand_size} = state) do
     case :gen_tcp.send(sock, payload) do
       :ok ->
-        {:ok, state}
+        {{:ok, demand: {:sink, demand_size}}, state}
 
       {:error, reason} ->
         warn("Failed to send buffer: #{inspect(reason)}")

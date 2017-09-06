@@ -9,7 +9,7 @@ defmodule Membrane.Element.Icecast.Mixfile do
      elixirc_paths: elixirc_paths(Mix.env),
      description: "Membrane Multimedia Framework (Icecast Element)",
      maintainers: ["Marcin Lewandowski"],
-     licenses: ["MIT"],
+     licenses: ["LGPL"],
      name: "Membrane Element: Icecast",
      source_url: "https://github.com:membraneframework/membrane-element-icecast",
      preferred_cli_env: [espec: :test],
@@ -30,7 +30,7 @@ defmodule Membrane.Element.Icecast.Mixfile do
 
   defp deps do
     [
-      {:membrane_core, git: "git@github.com:membraneframework/membrane-core.git"},
+      {:membrane_core, git: "git@github.com:membraneframework/membrane-core.git", branch: "feature/pull"},
       {:membrane_caps_audio_mpeg, git: "git@github.com:membraneframework/membrane-caps-audio-mpeg.git"},
     ]
   end
