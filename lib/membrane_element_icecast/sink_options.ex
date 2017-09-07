@@ -7,7 +7,7 @@ defmodule Membrane.Element.Icecast.Sink.Options do
   @type mount_t :: String.t
   @type connect_timeout_t :: pos_integer
   @type request_timeout_t :: pos_integer | :infinity
-  @type demand_size_t :: pos_integer
+  @type demanded_buffers_t :: pos_integer
 
   @type t :: %Membrane.Element.Icecast.Sink.Options{
     host: host_t,
@@ -16,7 +16,7 @@ defmodule Membrane.Element.Icecast.Sink.Options do
     mount: mount_t,
     connect_timeout: connect_timeout_t,
     request_timeout: request_timeout_t,
-    demand_size: demand_size_t,
+    demanded_buffers: demanded_buffers_t,
   }
 
   defstruct \
@@ -26,5 +26,5 @@ defmodule Membrane.Element.Icecast.Sink.Options do
     mount: nil,
     connect_timeout: 5000,
     request_timeout: 5000,
-    demand_size: 2048
+    demanded_buffers: 1
 end
