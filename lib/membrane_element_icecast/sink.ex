@@ -33,43 +33,41 @@ defmodule Membrane.Element.Icecast.Sink do
 
 
   @doc false
-  def handle_play(%{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout} = state) do
+  def handle_play(%{host: host, port: port, connect_timeout: connect_timeout} = state) do
     case :gen_tcp.connect(to_charlist(host), port, [mode: :binary, packet: :line, active: false, keepalive: true], connect_timeout) do
       {:ok, sock} ->
-        info("Connected to #{host}:#{port}")
-
-        credentials = "source:#{password}" |> Base.encode64
-
-        case :gen_tcp.send(sock, "SOURCE #{mount} HTTP/1.0\r\nAuthorization: Basic #{credentials}\r\nHost: #{host}\r\nUser-Agent: RadioKit Osmosis\r\nContent-Type: audio/mpeg\r\n\r\n") do
-          :ok ->
-            info("Sent request")
-            case :gen_tcp.recv(sock, 0, request_timeout) do
-              {:ok, "HTTP/1.0 200 OK\r\n"} ->
-                info("Got OK response")
-                send self(), :tick
-                last_tick = Time.monotonic_time()
-                {:ok, %{state | sock: sock, next_tick: last_tick}}
-
-              {:ok, response} ->
-                warn("Got unexpected response: #{inspect(response)}")
-                :ok = :gen_tcp.close(sock)
-                {:error, {:response, {:unexpected, response}}, %{state | sock: nil}}
-
-              {:error, reason} ->
-                warn("Failed to receive response: #{inspect(reason)}")
-                :ok = :gen_tcp.close(sock)
-                {:error, {:response, reason}, %{state | sock: nil}}
-            end
-
-          {:error, reason} ->
-            warn("Failed to send request: #{inspect(reason)}")
-            :ok = :gen_tcp.close(sock)
-            {:error, {:request, reason}, %{state | sock: nil}}
-        end
+        do_request(state, sock)
 
       {:error, reason} ->
         warn("Failed to connect to #{host}:#{port}: #{inspect(reason)}")
         {:error, {:connect, reason}, %{state | sock: nil}}
+    end
+  end
+
+  defp do_request(%{host: host, mount: mount, password: password, request_timeout: request_timeout} = state, sock) do
+    with credentials <- "source:#{password}" |> Base.encode64,
+         {:request, :ok} <- {:request, :gen_tcp.send(sock, "SOURCE #{mount} HTTP/1.0\r\nAuthorization: Basic #{credentials}\r\nHost: #{host}\r\nUser-Agent: RadioKit Osmosis\r\nContent-Type: audio/mpeg\r\n\r\n")},
+         {:response, {:ok, "HTTP/1.0 200 OK\r\n"}} <- {:response, :gen_tcp.recv(sock, 0, request_timeout)}
+    do
+      info("Got OK response")
+      send self(), :tick
+      last_tick = Time.monotonic_time()
+      {:ok, %{state | sock: sock, next_tick: last_tick}}
+    else
+      {:request, {:error, reason}} ->
+        warn("Failed to send request: #{inspect(reason)}")
+        :ok = :gen_tcp.close(sock)
+        {:error, {:request, reason}, %{state | sock: nil}}
+
+      {:response, {:ok, response}} ->
+        warn("Got unexpected response: #{inspect(response)}")
+        :ok = :gen_tcp.close(sock)
+        {:error, {:response, {:unexpected, response}}, %{state | sock: nil}}
+
+      {:response, {:error, reason}} ->
+        warn("Failed to receive response: #{inspect(reason)}")
+        :ok = :gen_tcp.close(sock)
+        {:error, {:response, reason}, %{state | sock: nil}}
     end
   end
 
