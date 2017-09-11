@@ -7,7 +7,7 @@ defmodule Membrane.Element.Icecast.Sink.Options do
   @type mount_t :: String.t
   @type connect_timeout_t :: pos_integer
   @type request_timeout_t :: pos_integer | :infinity
-  @type demanded_buffers_t :: pos_integer
+  @type frame_duration_t :: float
 
   @type t :: %Membrane.Element.Icecast.Sink.Options{
     host: host_t,
@@ -16,7 +16,7 @@ defmodule Membrane.Element.Icecast.Sink.Options do
     mount: mount_t,
     connect_timeout: connect_timeout_t,
     request_timeout: request_timeout_t,
-    demanded_buffers: demanded_buffers_t,
+    frame_duration: frame_duration_t,
   }
 
   defstruct \
@@ -26,5 +26,6 @@ defmodule Membrane.Element.Icecast.Sink.Options do
     mount: nil,
     connect_timeout: 5000,
     request_timeout: 5000,
-    demanded_buffers: 1
+    # frame_duration of MPEG v1 layer 2 in ns
+    frame_duration: 1_000_000_000 / 44_100 * 1152
 end

@@ -16,7 +16,7 @@ defmodule Membrane.Element.Icecast.Sink do
   # Private API
 
   @doc false
-  def handle_init(%Options{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout, demanded_buffers: demanded_buffers}) do
+  def handle_init(%Options{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout, frame_duration: frame_duration}) do
     {:ok, %{
       sock: nil,
       host: host,
@@ -25,16 +25,15 @@ defmodule Membrane.Element.Icecast.Sink do
       password: password,
       connect_timeout: connect_timeout,
       request_timeout: request_timeout,
-      demanded_buffers: demanded_buffers,
-      start_time: nil,
-      frame_duration: 26 |> Time.milliseconds |> Time.to_nanoseconds,
+      frame_duration: frame_duration,
+      demanded_buffers: 1,
+      next_tick: nil,
     }}
   end
 
 
   @doc false
   def handle_play(%{host: host, port: port, mount: mount, password: password, connect_timeout: connect_timeout, request_timeout: request_timeout} = state) do
-    start_time = Time.monotonic_time()
     case :gen_tcp.connect(to_charlist(host), port, [mode: :binary, packet: :line, active: false, keepalive: true], connect_timeout) do
       {:ok, sock} ->
         info("Connected to #{host}:#{port}")
@@ -48,7 +47,8 @@ defmodule Membrane.Element.Icecast.Sink do
               {:ok, "HTTP/1.0 200 OK\r\n"} ->
                 info("Got OK response")
                 send self(), :tick
-                {:ok, %{state | sock: sock, start_time: start_time}}
+                last_tick = Time.monotonic_time()
+                {:ok, %{state | sock: sock, next_tick: last_tick}}
 
               {:ok, response} ->
                 warn("Got unexpected response: #{inspect(response)}")
@@ -76,28 +76,26 @@ defmodule Membrane.Element.Icecast.Sink do
   @doc false
   def handle_caps(:sink, %Audio.MPEG{sample_rate: sample_rate, version: version, layer: layer}, _params, state) do
     samples = Audio.MPEG.samples_per_frame(version, layer)
-    frame_duration = (1 |> Time.second |> Time.to_nanoseconds) * samples |> div(sample_rate)
+    frame_duration = (1 |> Time.second |> Time.to_nanoseconds) * samples / sample_rate
+    debug("New frame duration #{frame_duration}")
     {:ok, %{state | frame_duration: frame_duration}}
   end
 
   @doc false
-  def handle_other(:tick, %{start_time: start_time, frame_duration: frame_duration, demanded_buffers: demanded_buffers} = state) do
-    time_interval = frame_duration * demanded_buffers
-    # Adjust next time to compensate for fact, that tick will be sent with additional delay
-    next_tick = time_interval - ((Time.monotonic_time() - start_time) |> rem(time_interval))
-    warn(next_tick)
-    _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick))
-    {{:ok, demand: {:sink, demanded_buffers}}, state}
+  def handle_other(:tick, %{next_tick: this_tick, frame_duration: frame_duration, demanded_buffers: demanded_buffers} = state) do
+    next_tick = this_tick + round(frame_duration * demanded_buffers)
+    _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick), abs: true)
+    {{:ok, demand: {:sink, demanded_buffers}}, %{state | next_tick: next_tick}}
   end
 
   @doc false
   def handle_stop(%{sock: nil} = state) do
-    {:ok, state}
+    {:ok, %{state | next_tick: nil}}
   end
 
   def handle_stop(%{sock: sock} = state) do
     :ok = :gen_tcp.close(sock)
-    {:ok, %{state | sock: nil}}
+    {:ok, %{state | next_tick: nil, sock: nil}}
   end
 
 
