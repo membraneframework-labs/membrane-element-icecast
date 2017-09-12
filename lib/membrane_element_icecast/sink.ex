@@ -27,7 +27,8 @@ defmodule Membrane.Element.Icecast.Sink do
       request_timeout: request_timeout,
       frame_duration: frame_duration,
       demanded_buffers: 1,
-      next_tick: nil,
+      first_tick: nil,
+      tick_offset: 0.0,
     }}
   end
 
@@ -51,8 +52,8 @@ defmodule Membrane.Element.Icecast.Sink do
     do
       info("Got OK response")
       send self(), :tick
-      last_tick = Time.monotonic_time()
-      {:ok, %{state | sock: sock, next_tick: last_tick}}
+      first_tick = Time.monotonic_time()
+      {:ok, %{state | sock: sock, first_tick: first_tick}}
     else
       {:request, {:error, reason}} ->
         warn("Failed to send request: #{inspect(reason)}")
@@ -79,11 +80,22 @@ defmodule Membrane.Element.Icecast.Sink do
     {:ok, %{state | frame_duration: frame_duration}}
   end
 
-  @doc false
-  def handle_other(:tick, %{next_tick: this_tick, frame_duration: frame_duration, demanded_buffers: demanded_buffers} = state) do
-    next_tick = this_tick + round(frame_duration * demanded_buffers)
+  @doc """
+  Function that is responsible for synchronization of streaming
+
+  There are 3 important values kept in state:
+  * first_tick - integer, monotonic_time in ns
+  * tick_offset - float, in ns
+  * frame_duration - float, in ns
+
+  On each tick, this function adds frame_duration to current offset and stores new value in state
+  To determine time in ms for `send_after` rounded offset is added to first_tick
+  """
+  def handle_other(:tick, %{first_tick: first_tick, tick_offset: tick_offset, frame_duration: frame_duration, demanded_buffers: demanded_buffers} = state) do
+    new_offset = tick_offset + frame_duration * demanded_buffers
+    next_tick = first_tick + round(new_offset)
     _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick), abs: true)
-    {{:ok, demand: {:sink, demanded_buffers}}, %{state | next_tick: next_tick}}
+    {{:ok, demand: {:sink, demanded_buffers}}, %{state | tick_offset: new_offset}}
   end
 
   @doc false
