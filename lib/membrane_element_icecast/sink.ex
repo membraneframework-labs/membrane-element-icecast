@@ -41,7 +41,7 @@ defmodule Membrane.Element.Icecast.Sink do
 
       {:error, reason} ->
         warn("Failed to connect to #{host}:#{port}: #{inspect(reason)}")
-        {:error, {:connect, reason}, %{state | sock: nil}}
+        {{:error, {:connect, reason}}, %{state | sock: nil}}
     end
   end
 
@@ -58,17 +58,17 @@ defmodule Membrane.Element.Icecast.Sink do
       {:request, {:error, reason}} ->
         warn("Failed to send request: #{inspect(reason)}")
         :ok = :gen_tcp.close(sock)
-        {:error, {:request, reason}, %{state | sock: nil}}
+        {{:error, {:request, reason}}, %{state | sock: nil}}
 
       {:response, {:ok, response}} ->
         warn("Got unexpected response: #{inspect(response)}")
         :ok = :gen_tcp.close(sock)
-        {:error, {:response, {:unexpected, response}}, %{state | sock: nil}}
+        {{:error, {:response, {:unexpected, response}}}, %{state | sock: nil}}
 
       {:response, {:error, reason}} ->
         warn("Failed to receive response: #{inspect(reason)}")
         :ok = :gen_tcp.close(sock)
-        {:error, {:response, reason}, %{state | sock: nil}}
+        {{:error, {:response, reason}}, %{state | sock: nil}}
     end
   end
 
@@ -123,7 +123,7 @@ defmodule Membrane.Element.Icecast.Sink do
       {:error, reason} ->
         warn("Failed to send buffer: #{inspect(reason)}")
         :ok = :gen_tcp.close(sock)
-        {:error, {:send, reason}, %{state | sock: nil}}
+        {{:error, {:send, reason}}, %{state | sock: nil}}
     end
   end
 end
