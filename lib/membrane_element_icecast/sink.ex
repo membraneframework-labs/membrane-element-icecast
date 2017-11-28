@@ -95,7 +95,7 @@ defmodule Membrane.Element.Icecast.Sink do
     new_offset = tick_offset + frame_duration * demanded_buffers
     next_tick = first_tick + round(new_offset)
     _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick), abs: true)
-    {{:ok, demand: {:sink, demanded_buffers}}, %{state | tick_offset: new_offset}}
+    {{:ok, demand: {:sink, {:set_to, demanded_buffers}}}, %{state | tick_offset: new_offset}}
   end
 
   @doc false
