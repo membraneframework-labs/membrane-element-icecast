@@ -1,6 +1,6 @@
 defmodule Membrane.Element.Icecast.Sink do
   use Membrane.Element.Base.Sink
-  use Membrane.Mixins.Log
+  use Membrane.Mixins.Log, tags: :membrane_element_icecast
   alias Membrane.Time
   alias Membrane.Element.Icecast.Sink.Options
   alias Membrane.Buffer
@@ -50,7 +50,7 @@ defmodule Membrane.Element.Icecast.Sink do
          {:request, :ok} <- {:request, :gen_tcp.send(sock, "SOURCE #{mount} HTTP/1.0\r\nAuthorization: Basic #{credentials}\r\nHost: #{host}\r\nUser-Agent: RadioKit Osmosis\r\nContent-Type: audio/mpeg\r\n\r\n")},
          {:response, {:ok, "HTTP/1.0 200 OK\r\n"}} <- {:response, :gen_tcp.recv(sock, 0, request_timeout)}
     do
-      info("Got OK response")
+      debug("Got OK response")
       send self(), :tick
       first_tick = Time.monotonic_time()
       {:ok, %{state | sock: sock, first_tick: first_tick}}
