@@ -29,6 +29,7 @@ defmodule Membrane.Element.Icecast.Sink do
       demanded_buffers: 1,
       first_tick: nil,
       tick_offset: 0.0,
+      written_time: Time.monotonic_time,
     }}
   end
 
@@ -92,10 +93,18 @@ defmodule Membrane.Element.Icecast.Sink do
   To determine time in ms for `send_after` rounded offset is added to first_tick
   """
   def handle_other(:tick, %{first_tick: first_tick, tick_offset: tick_offset, frame_duration: frame_duration, demanded_buffers: demanded_buffers} = state) do
-    new_offset = tick_offset + frame_duration * demanded_buffers
-    next_tick = first_tick + round(new_offset)
-    _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick), abs: true)
-    {{:ok, demand: {:sink, {:set_to, demanded_buffers}}}, %{state | tick_offset: new_offset}}
+    not_written_time = Time.monotonic_time - state.written_time
+    if not_written_time > (40 |> Time.seconds) do
+      IO.puts "icecast write timeout"
+      IO.inspect :erlang.process_info self()
+      IO.inspect state
+      {{:ok, event: {:sink, %Membrane.Event{type: :dump_state}}}, state}
+    else
+      new_offset = tick_offset + frame_duration * demanded_buffers
+      next_tick = first_tick + round(new_offset)
+      _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick), abs: true)
+      {{:ok, demand: {:sink, {:set_to, demanded_buffers}}}, %{state | tick_offset: new_offset}}
+    end
   end
 
   @doc false
@@ -108,17 +117,27 @@ defmodule Membrane.Element.Icecast.Sink do
     {:ok, %{state | next_tick: nil, sock: nil}}
   end
 
+  def handle_event(:sink, %Membrane.Event{type: :channel_added}, _, state) do
+    info "new channel"
+    {:ok, state}
+  end
+  def handle_event(:sink, %Membrane.Event{type: :channel_removed}, _, state) do
+    info "end of channel"
+    {:ok, state}
+  end
 
   @doc false
-  def handle_write1(:sink, _caps, _buffer, %{sock: nil} = state) do
-    warn("Received buffer while not connected")
-    {:ok, state}
+  def handle_write1(:sink, _caps, _buffer, %{sock: nil}) do
+    raise "Received buffer while not connected"
   end
 
   def handle_write1(:sink, %Buffer{payload: payload}, _caps, %{sock: sock} = state) do
     case :gen_tcp.send(sock, payload) do
       :ok ->
-        {:ok, state}
+        not_written_time = Time.monotonic_time - state.written_time
+        if not_written_time > 2*state.frame_duration,
+          do: info "not written for #{not_written_time |> Time.to_milliseconds} ms"
+        {:ok, %{state | written_time: Time.monotonic_time}}
 
       {:error, reason} ->
         warn("Failed to send buffer: #{inspect(reason)}")
