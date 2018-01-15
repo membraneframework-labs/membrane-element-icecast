@@ -2,9 +2,9 @@ defmodule Membrane.Element.Icecast.Sink do
   use Membrane.Element.Base.Sink
   use Membrane.Mixins.Log, tags: :membrane_element_icecast
   alias Membrane.Time
-  alias Membrane.Element.Icecast.Sink.Options
+  alias __MODULE__.Options
   alias Membrane.Buffer
-  alias Membrane.Caps.Audio
+  alias Membrane.Caps.Audio.MPEG, as: Caps
 
   @moduledoc false
 
@@ -30,6 +30,7 @@ defmodule Membrane.Element.Icecast.Sink do
       first_tick: nil,
       tick_offset: 0.0,
       written_time: Time.monotonic_time,
+      written: false,
     }}
   end
 
@@ -74,8 +75,8 @@ defmodule Membrane.Element.Icecast.Sink do
   end
 
   @doc false
-  def handle_caps(:sink, %Audio.MPEG{sample_rate: sample_rate, version: version, layer: layer}, _params, state) do
-    samples = Audio.MPEG.samples_per_frame(version, layer)
+  def handle_caps(:sink, %Caps{sample_rate: sample_rate, version: version, layer: layer}, _params, state) do
+    samples = Caps.samples_per_frame(version, layer)
     frame_duration = (1 |> Time.second |> Time.to_nanoseconds) * samples / sample_rate
     debug("New frame duration #{frame_duration}")
     {:ok, %{state | frame_duration: frame_duration}}
@@ -92,18 +93,19 @@ defmodule Membrane.Element.Icecast.Sink do
   On each tick, this function adds frame_duration to current offset and stores new value in state
   To determine time in ms for `send_after` rounded offset is added to first_tick
   """
-  def handle_other(:tick, %{first_tick: first_tick, tick_offset: tick_offset, frame_duration: frame_duration, demanded_buffers: demanded_buffers} = state) do
-    not_written_time = Time.monotonic_time - state.written_time
-    if not_written_time > (40 |> Time.seconds) do
-      IO.puts "icecast write timeout"
-      IO.inspect :erlang.process_info self()
-      IO.inspect state
-      {{:ok, event: {:sink, %Membrane.Event{type: :dump_state}}}, state}
+  def handle_other(:tick, state) do
+    %{first_tick: first_tick, tick_offset: tick_offset,
+      frame_duration: frame_duration, demanded_buffers: demanded_buffers,
+      written: written} = state
+    new_offset = tick_offset + frame_duration * demanded_buffers
+    next_tick = first_tick + round(new_offset)
+    _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick), abs: true)
+    state = %{state | tick_offset: new_offset}
+    with :ok <- (if written do :ok else send_silence(state.sock, demanded_buffers) end)
+    do
+      {{:ok, demand: {:sink, {:set_to, demanded_buffers}}}, %{state | written: false}}
     else
-      new_offset = tick_offset + frame_duration * demanded_buffers
-      next_tick = first_tick + round(new_offset)
-      _timer_ref = Process.send_after(self(), :tick, Time.to_milliseconds(next_tick), abs: true)
-      {{:ok, demand: {:sink, {:set_to, demanded_buffers}}}, %{state | tick_offset: new_offset}}
+      {:error, reason} -> {{:error, reason}, state}
     end
   end
 
@@ -125,6 +127,9 @@ defmodule Membrane.Element.Icecast.Sink do
     info "end of channel"
     {:ok, state}
   end
+  def handle_event(pad, event, ctx, state) do
+    super(pad, event, ctx, state)
+  end
 
   @doc false
   def handle_write1(:sink, _caps, _buffer, %{sock: nil}) do
@@ -132,17 +137,37 @@ defmodule Membrane.Element.Icecast.Sink do
   end
 
   def handle_write1(:sink, %Buffer{payload: payload}, _caps, %{sock: sock} = state) do
-    case :gen_tcp.send(sock, payload) do
-      :ok ->
-        not_written_time = Time.monotonic_time - state.written_time
-        if not_written_time > 2*state.frame_duration,
-          do: info "not written for #{not_written_time |> Time.to_milliseconds} ms"
-        {:ok, %{state | written_time: Time.monotonic_time}}
-
+    with :ok <- send_buffer(sock, payload) do
+      not_written_time = Time.monotonic_time - state.written_time
+      if not_written_time > 2*state.frame_duration do
+        info "not written for #{not_written_time |> Time.to_milliseconds} ms"
+      end
+      {:ok, %{state | written_time: Time.monotonic_time, written: true}}
+    else
       {:error, reason} ->
-        warn("Failed to send buffer: #{inspect(reason)}")
-        :ok = :gen_tcp.close(sock)
-        {{:error, {:send, reason}}, %{state | sock: nil}}
+        {{:error, reason}, %{state | sock: nil}}
     end
   end
+
+  #TODO: support other than default frame durations
+  defp send_silence(_sock, 0), do: :ok
+  defp send_silence(sock, size) when size > 0 do
+    {payload, _caps} = Caps.sound_of_silence
+    payload = Stream.repeatedly(fn -> payload end)
+      |> Enum.take(size)
+      |> IO.iodata_to_binary
+    send_buffer(sock, payload)
+  end
+
+  defp send_buffer(sock, payload) do
+    with :ok <- :gen_tcp.send(sock, payload) do
+      :ok
+    else
+      {:error, reason} ->
+        warn("Failed to send buffer: #{inspect(reason)}")
+        :gen_tcp.close(sock)
+        {:error, {:send_buffer_to_icecast, reason}}
+    end
+  end
+
 end
